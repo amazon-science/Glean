@@ -1,0 +1,12 @@
+matplotlib==3.7.3
+numpy==1.23.5
+openai==0.28.0
+pandas==2.0.3
+scikit_learn==1.2.0
+scipy==1.9.3
+seaborn==0.13.2
+torch==1.11.0
+tqdm==4.66.4
+transformers==4.15.0
+sentence_transformers
+faiss-gpu==1.7.2
