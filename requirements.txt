@@ -7,6 +7,6 @@ scipy==1.9.3
 seaborn==0.13.2
 torch==1.11.0
 tqdm==4.66.4
-transformers==4.15.0
+transformers==4.38.0
 sentence_transformers
 faiss-gpu==1.7.2
