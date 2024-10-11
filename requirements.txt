@@ -5,7 +5,7 @@ pandas==2.0.3
 scikit_learn==1.2.0
 scipy==1.9.3
 seaborn==0.13.2
-torch==1.11.0
+torch==2.2.0
 tqdm==4.66.4
 transformers==4.38.0
 sentence_transformers
