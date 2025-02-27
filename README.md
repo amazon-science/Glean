@@ -38,6 +38,9 @@ conda install pytorch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 pytorch-cuda=
 pip install -r requirements.txt
 pip install faiss-gpu==1.7.2 --no-cache-dir
 ```
+To reproduce our paper results, make sure that you have the following package version installed:
+transformers==4.15.0, pytorch==2.1.0, 2.1.1 or 2.1.2, as we found that model performance may vary across different package versions, particularly with the transformers package.
+
 
 ## Running
 First, add you OpenAI API key in line 58 of the 'run.sh' file.
