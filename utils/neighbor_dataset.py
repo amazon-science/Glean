@@ -7,6 +7,8 @@ import openai
 import time
 import re
 import json
+import os
+from together import Together
 
 class NeighborsDataset(Dataset):
     def __init__(self, args, dataset, indices, query_index, pred, p, cluster_name=None, num_neighbors=None,
@@ -83,21 +85,35 @@ class NeighborsDataset(Dataset):
                     else:
                         topk_probs, topk_indices = torch.topk(prob_tensor, self.args.options, dim=-1)
                         qs = [np.random.choice(np.where(self.pred==topk_indices[i].item())[0], 1)[0] for i in range(self.args.options)]
-                        neighbor_index = self.query_llm_gen(index, qs)
+                        # neighbor_index = self.query_llm_gen(index, qs)
+                        neighbor_index, confidence = self.query_llm_gen(index, qs)
+
+                        if self.args.flag_filtering:
+                            # filter out the LLM feedback with confidence less than a threshold
+                            if float(confidence) < self.args.filter_threshold:
+                                neighbor_index = np.random.choice(self.indices[index], 1)[0]
+
                         self.di[index] = neighbor_index
                         self.di_all[index] = neighbor_index
+                    
 
                     if self.args.weight_cluster_instance_cl > 0:
                         # query llm to assign the anchor to one of the topk clusters based on category names and descriptions
                         k = int(np.floor(self.args.options_cluster_instance_ratio * len(self.cluster_name)))
                         topk_probs, topk_indices = torch.topk(prob_tensor, k, dim=-1)
                         topk_cluster_name = [self.cluster_name[i.item()] for i in topk_indices]
-                        pos_cluster_idx = self.query_llm_cluster_instance(anchor_text, topk_cluster_name, topk_indices)
+                        pos_cluster_idx, confidence = self.query_llm_cluster_instance(anchor_text, topk_cluster_name, topk_indices)
                         neg_cluster_idx = topk_indices[topk_indices != pos_cluster_idx]
 
                         if self.count < 6:
                             print(f"\nAnchor: {anchor_text} \nPositive Cluster Name: {self.cluster_name[pos_cluster_idx]}")
                         
+                        if self.args.flag_filtering_c:
+                            # filter out the LLM feedback with confidence less than a threshold
+                            if float(confidence) < self.args.filter_threshold_c:
+                                pos_cluster_idx = None
+                                neg_cluster_idx = None
+
                         self.di_all_pos_cluster_idx[index] = pos_cluster_idx
                         self.di_all_neg_cluster_idx[index] = neg_cluster_idx
 
@@ -123,8 +139,15 @@ class NeighborsDataset(Dataset):
 
                 if self.di.get(index, -1) == -1:
                     # Generalize to the case # querying neighbors / options >= 2
-                    neighbor_index = self.query_llm_gen(index, qs)
-                    
+                    # neighbor_index = self.query_llm_gen(index, qs)
+                    neighbor_index, confidence = self.query_llm_gen(index, qs)
+
+                    if self.args.flag_filtering:
+                        # filter out the LLM feedback with confidence less than a threshold
+                        if float(confidence) < self.args.filter_threshold:
+                            neighbor_index = np.random.choice(self.indices[index], 1)[0]
+                            self.di[index] = neighbor_index
+
                     self.di[index] = neighbor_index
                     self.count += 1
                 else:
@@ -147,12 +170,24 @@ class NeighborsDataset(Dataset):
         s = self.tokenizer.decode(self.dataset.__getitem__(q)[0], skip_special_tokens=True, clean_up_tokenization_spaces=True)
         sqs = [self.tokenizer.decode(self.dataset.__getitem__(q)[0], skip_special_tokens=True, clean_up_tokenization_spaces=True) for q in qs]
         
+        # # Construct the base of the prompt
+        # prompt = (
+        #     f"Select the customer utterance that better corresponds with the Query in terms of {self.args.task}. "
+        #     "Please respond in the format 'Choice [number]' without explanation, e.g., 'Choice 1', 'Choice 2', etc."
+        #     "\nQuery: " + s
+        # )
+
         # Construct the base of the prompt
-        prompt = (
-            f"Select the customer utterance that better corresponds with the Query in terms of {self.args.task}. "
-            "Please respond in the format 'Choice [number]' without explanation, e.g., 'Choice 1', 'Choice 2', etc."
-            "\nQuery: " + s
-        )
+        prompt = f"Select the utterance that better corresponds with the Query in terms of {self.args.task}. "
+        prompt += "\n Also show your confidence by providing a probability between 0 and 1."
+        prompt += "\n Please respond in the format 'Choice [number], Confidence: [number]' without explanation, e.g., 'Choice 1, Confidence: 0.7', 'Choice 2, Confidence: 0.9', etc.\n"
+        
+        # Add demonstration in the format of Text: [text], Label: [label]
+        if self.args.flag_demo:
+            prompt += self.args.prompt_demo
+        
+        # Add the query dynamically
+        prompt += f"\nQuery: {s}"
         
         # Add each choice dynamically
         for i, sq in enumerate(sqs):
@@ -166,71 +201,51 @@ class NeighborsDataset(Dataset):
         if self.args.running_method == 'GCDLLMs_w_cluster_alignment':
             return qs[0]
         try:
-            if 'llama' in self.args.llm:
-                import boto3
-                request = {
-                    "prompt": prompt,
-                    "max_gen_len": 50,
-                    "temperature": 0,
-                    "top_p": 1.0,
-                }
-                bedrock_rt = boto3.client("bedrock-runtime", "us-west-2")
-                # Convert the native request to JSON.
-                request = json.dumps(request)
-                response = bedrock_rt.invoke_model(modelId=self.args.llm, body=request)
-                # Decode the response body.
-                model_response = json.loads(response["body"].read())
-                # Extract and print the response text.
-                response_text = model_response["generation"]
-                choices_content = response_text
-            elif 'claude' in self.args.llm:
-                import boto3
-                import time
-                from botocore.exceptions import ClientError
-                bedrock_rt = boto3.client("bedrock-runtime", "us-west-2")
-                retries = 0
-                max_retries = 10  # maximum number of retries
-                backoff_time = 1  # initial backoff time in seconds
+            if 'gpt' not in self.args.llm:
+                os.environ["TOGETHER_API_KEY"] = self.args.api_key
+                client = Together()
+                # completion = client.chat.completions.create(
+                #     model= "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free", # "Qwen/Qwen2.5-72B-Instruct-Turbo", # "deepseek-ai/DeepSeek-V3", # "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free", "meta-llama/Llama-Vision-Free", 
+                #     messages=[
+                #         {"role": "system", "content": "You are a helpful assistant."},
+                #         {"role": "user", "content": prompt}
+                #     ],
+                #     temperature=0.0,  # Set to 0 to remove randomness
+                #     top_p=1.0,        # Use top_p sampling with the full range of tokens
+                #     n=1,               # Number of responses to generate
+                #     max_tokens=50     # Set a lower max_tokens value to limit response length and avoid timeout
+                # )
+                # choices_content = completion.choices[0].message.content
 
-                while retries < max_retries:
+                max_retries = 5
+                retry_delay = 1  # Wait for 1 seconds before retrying
+                for attempt in range(max_retries):
                     try:
-                        response = bedrock_rt.invoke_model(
-                            modelId=self.args.llm,
-                            body=json.dumps(
-                                {
-                                    "anthropic_version": "bedrock-2023-05-31",
-                                    "max_tokens": 50,
-                                    "system": "You are a helpful assistant.",
-                                    "messages": [{"role": "user", "content": prompt}],
-                                    "temperature": 0,
-                                    "top_p": 1.0,
-                                }
-                            )
+                        completion = client.chat.completions.create(
+                            model=self.args.llm,
+                            messages=[
+                                {"role": "system", "content": "You are a helpful assistant."},
+                                {"role": "user", "content": prompt}
+                            ],
+                            temperature=0.0,
+                            top_p=1.0,
+                            n=1,
+                            max_tokens=50
                         )
-                        response_body = json.loads(response.get('body').read())
+                        choices_content = completion.choices[0].message.content
+                        break  # If successful, break out of the loop
+                    except Exception as e:
+                        if attempt < max_retries - 1:
+                            print(f"Attempt {attempt + 1} failed: {e}. Retrying in {retry_delay} seconds...")
+                            time.sleep(retry_delay)
+                        else:
+                            print(f"Attempt {attempt + 1} failed: {e}. No more retries left.")
+                            # choices_content = None  # Handle the case where all retries fail
+                            # print(e)  # This will print the actual exception message
+                            # return qs[0], 0.0
+                            raise e # Re-raise the exception to handle it outside the loop
 
-                        # Ensure the response structure is as expected
-                        if "content" in response_body and isinstance(response_body["content"], list) and len(response_body["content"]) > 0:
-                            choices_content = response_body["content"][0].get("text", "")
-                            if isinstance(choices_content, str) and choices_content.strip():  # Check if the text is a non-empty string
-                                break  # Valid response received, exit the retry loop
-                            else:
-                                print("Empty or invalid text returned by Claude. Retrying.")
-                        else:
-                            print("Unexpected response structure from Claude. Retrying.")
-                        
-                    except ClientError as e:
-                        if e.response['Error']['Code'] == 'ThrottlingException':
-                            retries += 1
-                            print(f"ThrottlingException encountered. Retry {retries}/{max_retries}. Waiting for {backoff_time} seconds.")
-                            time.sleep(backoff_time)
-                            backoff_time *= 2  # Exponential backoff
-                        else:
-                            raise e  # Re-raise other exceptions
-                else:
-                    # If the loop exits without breaking, it means all retries failed
-                    print("Failed to get a valid response from Claude after multiple retries. Using fallback.")
-                    choices_content = None
+
             else:
                 completion = openai.ChatCompletion.create(
                     model=self.args.llm,  # 'gpt-4o-mini', # "gpt-3.5-turbo",
@@ -252,24 +267,42 @@ class NeighborsDataset(Dataset):
                 # Match ' Choice X' at the start or followed by a colon and any characters
                 if re.search(rf'\b{choice_str}\b(:\s*\w*)?', choices_content):
                     result = qs[i]
+                    # Match 'Confidence: X' with a decimal number
+                    try:
+                        confidence = re.search(r'Confidence: (\d+(\.\d+)?)', choices_content)
+                    except Exception as e:
+                        print('No confidence matched, ', e)
+                        confidence = 0.0
                     break
             else:
                 result = qs[0]  # Default return value if no choice matches
-            return result
+            return result, confidence.group(1)
 
         except Exception as e:
             print(e)  # This will print the actual exception message
-            return qs[0]
+            return qs[0], 0.0
 
 
     def query_llm_cluster_instance(self, anchor_text, topk_cluster_name, topk_cat_indices):
 
+        # # Construct the base of the prompt
+        # prompt = (
+        #     f"Select the category that better corresponds with the Query in terms of {self.args.task}. "
+        #     "Please respond in the format 'Choice [number]' without explanation, e.g., 'Choice 1', 'Choice 2', etc."
+        #     "\nQuery: " + anchor_text
+        # )
+
         # Construct the base of the prompt
-        prompt = (
-            f"Select the category that better corresponds with the Query in terms of {self.args.task}. "
-            "Please respond in the format 'Choice [number]' without explanation, e.g., 'Choice 1', 'Choice 2', etc."
-            "\nQuery: " + anchor_text
-        )
+        prompt = f"Select the category that better corresponds with the Query in terms of {self.args.task}. "
+        prompt += "\n Also show your confidence by providing a probability between 0 and 1."
+        prompt += "\n Please respond in the format 'Choice [number], Confidence: [number]' without explanation, e.g., 'Choice 1, Confidence: 0.7', 'Choice 2, Confidence: 0.9', etc.\n"
+        
+        # Add demonstration in the format of Text: [text], Label: [label]
+        if self.args.flag_demo_c:
+            prompt += self.args.prompt_demo_c
+
+        # Add the query dynamically
+        prompt += f"\nQuery: {anchor_text}"
 
         # Add each choice dynamically
         for i, cluster_name in enumerate(topk_cluster_name):
@@ -281,71 +314,51 @@ class NeighborsDataset(Dataset):
         if self.api_key is None:
             return topk_cat_indices[0]
         try:
-            if 'llama' in self.args.llm:
-                import boto3
-                request = {
-                    "prompt": prompt,
-                    "max_gen_len": 50,
-                    "temperature": 0,
-                    "top_p": 1.0,
-                }
-                bedrock_rt = boto3.client("bedrock-runtime", "us-west-2")
-                # Convert the native request to JSON.
-                request = json.dumps(request)
-                response = bedrock_rt.invoke_model(modelId=self.args.llm, body=request)
-                # Decode the response body.
-                model_response = json.loads(response["body"].read())
-                # Extract and print the response text.
-                response_text = model_response["generation"]
-                choices_content = response_text
-            elif 'claude' in self.args.llm:
-                import boto3
-                import time
-                from botocore.exceptions import ClientError
-                bedrock_rt = boto3.client("bedrock-runtime", "us-west-2")
-                retries = 0
-                max_retries = 10  # maximum number of retries
-                backoff_time = 1  # initial backoff time in seconds
+            if 'gpt' not in self.args.llm:
+                os.environ["TOGETHER_API_KEY"] = self.args.api_key
+                client = Together()
+                # completion = client.chat.completions.create(
+                #     model= "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free", # "Qwen/Qwen2.5-72B-Instruct-Turbo", # "deepseek-ai/DeepSeek-V3", # "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free", "meta-llama/Llama-Vision-Free", 
+                #     messages=[
+                #         {"role": "system", "content": "You are a helpful assistant."},
+                #         {"role": "user", "content": prompt}
+                #     ],
+                #     temperature=0.0,  # Set to 0 to remove randomness
+                #     top_p=1.0,        # Use top_p sampling with the full range of tokens
+                #     n=1,               # Number of responses to generate
+                #     max_tokens=50     # Set a lower max_tokens value to limit response length and avoid timeout
+                # )
+                # choices_content = completion.choices[0].message.content
 
-                while retries < max_retries:
+                max_retries = 5
+                retry_delay = 1  # Wait for 1 seconds before retrying
+                for attempt in range(max_retries):
                     try:
-                        response = bedrock_rt.invoke_model(
-                            modelId=self.args.llm,
-                            body=json.dumps(
-                                {
-                                    "anthropic_version": "bedrock-2023-05-31",
-                                    "max_tokens": 50,
-                                    "system": "You are a helpful assistant.",
-                                    "messages": [{"role": "user", "content": prompt}],
-                                    "temperature": 0,
-                                    "top_p": 1.0,
-                                }
-                            )
+                        completion = client.chat.completions.create(
+                            model=self.args.llm,
+                            messages=[
+                                {"role": "system", "content": "You are a helpful assistant."},
+                                {"role": "user", "content": prompt}
+                            ],
+                            temperature=0.0,
+                            top_p=1.0,
+                            n=1,
+                            max_tokens=50
                         )
-                        response_body = json.loads(response.get('body').read())
+                        choices_content = completion.choices[0].message.content
+                        break  # If successful, break out of the loop
+                    except Exception as e:
+                        if attempt < max_retries - 1:
+                            print(f"Attempt {attempt + 1} failed: {e}. Retrying in {retry_delay} seconds...")
+                            time.sleep(retry_delay)
+                        else:
+                            print(f"Attempt {attempt + 1} failed: {e}. No more retries left.")
+                            # choices_content = None  # Handle the case where all retries fail
+                            # print(e)  # This will print the actual exception message
+                            # return topk_cat_indices[0], 0.0
+                            raise e # Re-raise the exception to handle it outside the loop
+                            
 
-                        # Ensure the response structure is as expected
-                        if "content" in response_body and isinstance(response_body["content"], list) and len(response_body["content"]) > 0:
-                            choices_content = response_body["content"][0].get("text", "")
-                            if isinstance(choices_content, str) and choices_content.strip():  # Check if the text is a non-empty string
-                                break  # Valid response received, exit the retry loop
-                            else:
-                                print("Empty or invalid text returned by Claude. Retrying.")
-                        else:
-                            print("Unexpected response structure from Claude. Retrying.")
-                        
-                    except ClientError as e:
-                        if e.response['Error']['Code'] == 'ThrottlingException':
-                            retries += 1
-                            print(f"ThrottlingException encountered. Retry {retries}/{max_retries}. Waiting for {backoff_time} seconds.")
-                            time.sleep(backoff_time)
-                            backoff_time *= 2  # Exponential backoff
-                        else:
-                            raise e  # Re-raise other exceptions
-                else:
-                    # If the loop exits without breaking, it means all retries failed
-                    print("Failed to get a valid response from Claude after multiple retries. Using fallback.")
-                    choices_content = None
             else:
                 completion = openai.ChatCompletion.create(
                     model=self.args.llm,  # 'gpt-4o-mini', # "gpt-3.5-turbo",
@@ -367,11 +380,17 @@ class NeighborsDataset(Dataset):
                 # Match ' Choice X' at the start or followed by a colon and any characters
                 if re.search(rf'\b{choice_str}\b(:\s*\w*)?', choices_content):
                     result = topk_cat_indices[i]
+                    # Match 'Confidence: X' with a decimal number
+                    try:
+                        confidence = re.search(r'Confidence: (\d+(\.\d+)?)', choices_content)
+                    except Exception as e:
+                        print('No confidence matched, ', e)
+                        confidence = 0.0
                     break
             else:
                 result = topk_cat_indices[0]  # Default return value if no choice matches
-            return result
+            return result, confidence.group(1)
 
         except Exception as e:
             print(e)  # This will print the actual exception message
-            return topk_cat_indices[0] 
+            return topk_cat_indices[0], 0.0

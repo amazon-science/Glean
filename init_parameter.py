@@ -140,6 +140,28 @@ def init_model():
     # LLM Feedback Caching & Replaying
     parser.add_argument("--feedback_cache", action="store_true", help="Save all feedback.")
 
+    # LLM Feedback Enhancement and Filtering for Instance-Level Feedback
+    parser.add_argument("--flag_demo", action="store_true", help="Enable demo in prompt.")      # default: False
+    parser.add_argument("--known_demo_num_per_class", default=5, type=int, help="# demo per known class.")
+    parser.add_argument("--flag_filtering", action="store_true", help="Enable feedback filtering.")   # default: False
+    parser.add_argument("--filter_threshold", default=0.8, type=float, help="Threshold for filtering feedback.")
+
+    # LLM Feedback Enhancement and Filtering for Cluster-Level Feedback
+    parser.add_argument("--flag_demo_c", action="store_true", help="Enable demo in prompt.")      # default: False
+    parser.add_argument("--known_demo_num_per_class_c", default=2, type=int, help="# demo per known class.")
+    parser.add_argument("--flag_filtering_c", action="store_true", help="Enable feedback filtering.")   # default: False
+    parser.add_argument("--filter_threshold_c", default=0.85, type=float, help="Threshold for filtering feedback.")
+
+    # args.flag_demo = True
+    # args.known_demo_num_per_class = 5
+    # args.flag_filtering = True
+    # args.filter_threshold = 0.8
+
+    # args.flag_demo_c = True
+    # args.known_demo_num_per_class_c = 2
+    # args.flag_filtering_c = True
+    # args.filter_threshold_c = 0.8
+
     # Ablation
     parser.add_argument("--prompt_ablation", default="full", type=str, help="Choose from full|wo_demo|wo_name|wo_description")
     parser.add_argument("--component_ablation", default="full", type=str, help="Choose from full|wo_ce|wo_cl_1|wo_cl_all|wo_instance_feedback|wo_cluster_feedback|wo_both_feedback")

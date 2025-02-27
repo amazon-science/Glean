@@ -15,7 +15,9 @@ import warnings
 from scipy.spatial import distance as dist
 from sklearn.neighbors import NearestNeighbors
 import re
+import time
 import openai
+from together import Together
 warnings.filterwarnings('ignore')
 logging.set_verbosity_error()
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -179,7 +181,7 @@ class ModelManager:
 
             label_names = list(args.label_map_semi.keys())
             print('label_names',label_names)   
-            measure_interpretability(cluster_name, label_names, args)  
+            # measure_interpretability(cluster_name, label_names, args)  
         else:
             cluster_name = None
 
@@ -300,11 +302,16 @@ class ModelManager:
 
 
                     # Supervised Classification Loss for Labeled Data
+                    # try:
+                    #     batch = labelediter.next()
+                    # except StopIteration:
+                    #     labelediter = iter(data.train_labeled_dataloader)
+                    #     batch = labelediter.next()
                     try:
-                        batch = labelediter.next()
+                        batch = next(labelediter)
                     except StopIteration:
                         labelediter = iter(data.train_labeled_dataloader)
-                        batch = labelediter.next()
+                        batch = next(labelediter)
                     batch = tuple(t.to(self.device) for t in batch)
                     X_an = {"input_ids":batch[0], "attention_mask":batch[1], "token_type_ids":batch[2]}
 
@@ -342,7 +349,7 @@ class ModelManager:
             args.evaluation_epoch = epoch
             # update neighbors every several epochs
             if ((epoch + 1) % args.update_per_epoch) == 0 and ((epoch + 1) != int(args.num_train_epochs)):
-                self.evaluation(args, data, save_results=False, plot_cm=False)
+                self.evaluation(args, data, save_results=True, plot_cm=False)
 
                 # Obtain initial features, labels, logits
                 feats_gpu, labels, logits = self.get_features_labels(data.train_semi_dataloader, self.model, args, return_logit=True)
@@ -470,74 +477,50 @@ class ModelManager:
 
         openai.api_key = self.args.api_key
         try:
-            if 'llama' in self.args.llm:
-                import boto3
-                request = {
-                    "prompt": prompt,
-                    "max_gen_len": 50,
-                    "temperature": 0,
-                    "top_p": 1.0,
-                }
-                bedrock_rt = boto3.client("bedrock-runtime", "us-west-2")
-                # Convert the native request to JSON.
-                request = json.dumps(request)
-                response = bedrock_rt.invoke_model(modelId=self.args.llm, body=request)
-                # Decode the response body.
-                model_response = json.loads(response["body"].read())
-                # Extract and print the response text.
-                response_text = model_response["generation"]
-                return response_text
-            elif 'claude' in self.args.llm:
-                import boto3
-                import time
-                from botocore.exceptions import ClientError
-                bedrock_rt = boto3.client("bedrock-runtime", "us-west-2")
-                retries = 0
-                max_retries = 10
-                backoff_time = 1  # initial backoff time in seconds
-
-                while retries < max_retries:
+            if 'gpt' not in self.args.llm:
+                os.environ["TOGETHER_API_KEY"] = self.args.api_key
+                client = Together()
+                # completion = client.chat.completions.create(
+                #     model= "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free", # "Qwen/Qwen2.5-72B-Instruct-Turbo", # "deepseek-ai/DeepSeek-V3", # "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free", "meta-llama/Llama-Vision-Free", 
+                #     messages=[
+                #         {"role": "system", "content": "You are a helpful assistant."},
+                #         {"role": "user", "content": prompt}
+                #     ],
+                #     temperature=0.0,  # Set to 0 to remove randomness
+                #     top_p=1.0,        # Use top_p sampling with the full range of tokens
+                #     n=1,               # Number of responses to generate
+                #     max_tokens=50     # Set a lower max_tokens value to limit response length and avoid timeout
+                # )
+                # return completion.choices[0].message.content
+                max_retries = 5
+                retry_delay = 1  # Wait for 1 seconds before retrying
+                for attempt in range(max_retries):
                     try:
-                        response = bedrock_rt.invoke_model(
-                            modelId=self.args.llm,
-                            body=json.dumps(
-                                {
-                                    "anthropic_version": "bedrock-2023-05-31",
-                                    "max_tokens": 50,
-                                    "system": "You are a helpful assistant.",
-                                    "messages": [{"role": "user", "content": prompt}],
-                                    "temperature": 0,
-                                    "top_p": 1.0,
-                                }
-                            )
+                        completion = client.chat.completions.create(
+                            model= self.args.llm,
+                            messages=[
+                                {"role": "system", "content": "You are a helpful assistant."},
+                                {"role": "user", "content": prompt}
+                            ],
+                            temperature=0.0,
+                            top_p=1.0,
+                            n=1,
+                            max_tokens=50
                         )
-                        response_body = json.loads(response.get('body').read())
-
-                        # Ensure the response structure is as expected
-                        if "content" in response_body and isinstance(response_body["content"], list) and len(response_body["content"]) > 0:
-                            output = response_body["content"][0].get("text", "")
-                            if isinstance(output, str) and output.strip():  # Check if the text is a non-empty string
-                                return output
-                            else:
-                                print("Empty or invalid text returned by Claude. Using fallback.")
+                        return completion.choices[0].message.content
+                        # break  # If successful, break out of the loop
+                    except Exception as e:
+                        if attempt < max_retries - 1:
+                            print(f"Attempt {attempt + 1} failed: {e}. Retrying in {retry_delay} seconds...")
+                            time.sleep(retry_delay)
                         else:
-                            print("Unexpected response structure from Claude. Using fallback.")
+                            print(f"Attempt {attempt + 1} failed: {e}. No more retries left.")
+                            # print(f"LLM query failed with exception: {e}")
+                            # # Return the first three utterances as a fallback
+                            # fallback_text = " | ".join(utterances[:3])
+                            # return f"Fallback Description: {fallback_text}"   
+                            raise e # If all attempts fail, raise the last exception   
                         
-                        # If the response is not valid, use the fallback
-                        fallback_text = " | ".join(utterances[:3])
-                        return f"Fallback Description: {fallback_text}"
-
-                    except ClientError as e:
-                        if e.response['Error']['Code'] == 'ThrottlingException':
-                            retries += 1
-                            print(f"ThrottlingException encountered. Retry {retries}/{max_retries}. Waiting for {backoff_time} seconds.")
-                            time.sleep(backoff_time)
-                            backoff_time *= 2  # Exponential backoff
-                        else:
-                            raise e  # Re-raise other exceptions
-                # If all retries fail, return a fallback
-                fallback_text = " | ".join(utterances[:3])
-                return f"Fallback Description: {fallback_text}"
             else:
                 completion = openai.ChatCompletion.create(
                     model= self.args.llm, #'gpt-4o-mini', # "gpt-3.5-turbo",
@@ -615,12 +598,14 @@ class ModelManager:
                args.sampling_strategy, args.allocation_degree, 
                args.weight_cluster_instance_cl, args.options_cluster_instance_ratio,
                args.prompt_ablation, args.component_ablation, args.llm,
-               args.feedback_cache, self.num_cached_feedback]
+               args.feedback_cache, self.num_cached_feedback,
+               args.flag_demo, args.known_demo_num_per_class, args.flag_filtering, args.flag_demo_c, args.known_demo_num_per_class_c, args.flag_filtering_c, args.filter_threshold, args.filter_threshold_c]
         names = ['evaluation_epoch', 'dataset', 'running_method', 'architecture', 'known_cls_ratio', 'label_setting', 'labeled_shot', 'labeled_ratio', 'result_source', 'seed', 'topk', 'view_strategy', 'num_train_epochs', 'ce_weight', 'cl_weight', 'sup_weight', 'weight_ce_unsup', 'options', 'query_samples', 'update_per_epoch',
                  'sampling_strategy', 'allocation_degree',
                  'weight_cluster_instance_cl', 'options_cluster_instance_ratio', 
                  'prompt_ablation', 'component_ablation', 'llm',
-                 'feedback_cache', 'num_cached_feedback']
+                 'feedback_cache', 'num_cached_feedback',
+                 'flag_demo', 'known_demo_num_per_class', 'flag_filtering', 'flag_demo_c', 'known_demo_num_per_class_c', 'flag_filtering_c', 'filter_threshold', 'filter_threshold_c']
         vars_dict = {k:v for k,v in zip(names, var)}
         results = dict(self.test_results,**vars_dict)
         keys = list(results.keys())

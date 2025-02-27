@@ -2,26 +2,26 @@
 
 ## Setup
 ```bash
-conda create -n gcdllms python=3.8 -y
-conda activate gcdllms
+conda create -n glean python=3.9 -y
+conda activate glean
 
 # install pytorch
-conda install pytorch==1.11.0 torchvision==0.12.0 torchaudio==0.11.0 cudatoolkit=11.3 -c pytorch
+conda install pytorch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 pytorch-cuda=12.1 -c pytorch -c nvidia
+
 
 # install dependency
 pip install -r requirements.txt
-pip install faiss-gpu==1.7.2
-pip install boto3 # if you need to use Claude and LLama provided by Bedrock
+pip install faiss-gpu==1.7.2 --no-cache-dir
 ```
 
 ## Running
-First, add you OpenAI API key in line 61 of the 'run_GCDLLMs.sh' file.
+First, add you OpenAI API key in line 58 of the 'run.sh' file.
 
 Pre-training, training and testing our model through the bash script:
 ```bash
-sh run_GCDLLMs.sh
+sh run.sh
 ```
-You can also add or change parameters in run_GCDLLMs.sh (More parameters are listed in init_parameter.py)
+You can also add or change parameters in run.sh (More parameters are listed in init_parameter.py)
 
 
 ## Bugs or Questions

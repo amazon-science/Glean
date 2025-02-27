@@ -1,14 +1,8 @@
 from utils.tools import *
 
-# intent detection: 'banking' 'clinc' 'stackoverflow'
-# emotion detection: 'goemotions' 'empatheticdialogues'
-# type discovery: 'few_event' 'few_rel_nat' 'few_nerd_nat'
-# topic mining: 'stackexchange' 'reddit' 'arxiv_fine' 
-# domain discovery: 'clinc_domain' 'mtop_domain' 'massive_scenario'
-
-max_seq_lengths = {'clinc':30, 'stackoverflow':45, 'banking':55, 'goemotions': 55, 'empatheticdialogues': 55}
-TOPK = {'clinc':50, 'stackoverflow':500, 'banking':50, 'goemotions': 50, 'empatheticdialogues': 50}
-task = {'clinc': 'intent', 'stackoverflow': 'intent', 'banking': 'intent', 'goemotions': 'emotion', 'empatheticdialogues': 'emotion'}
+max_seq_lengths = {'clinc':30, 'stackoverflow':45, 'banking':55}
+TOPK = {'clinc':50, 'stackoverflow':500, 'banking':50}
+task = {'clinc': 'intent', 'stackoverflow': 'intent', 'banking': 'intent'}
 
 class Data:
     
@@ -60,7 +54,43 @@ class Data:
         print('\nlabel_map_train\n', args.label_map_train)
         # print('\nlabel_map_test\n', args.label_map_test)
         print('\nlabel_map_semi\n', args.label_map_semi)
-        
+
+        ## Construct Demonstration Data
+        if args.flag_demo or args.flag_demo_c:
+            print('\nConstruct Demonstration Data')
+            # read from dev set
+            df_demo_path = os.path.join(args.data_dir, args.dataset, 'dev.tsv')
+            df_demo = pd.read_csv(df_demo_path, sep='\t')
+            
+            known_classes = self.known_label_list
+            print('Num of known classes: ', len(known_classes))
+            print('Known classes: ', known_classes)
+
+            # sample demon data per known class
+            demo_data = df_demo[df_demo['label'].isin(known_classes)].groupby('label').head(args.known_demo_num_per_class).reset_index(drop=True)
+            demo_data_c = df_demo[~df_demo['label'].isin(known_classes)].groupby('label').head(args.known_demo_num_per_class_c).reset_index(drop=True)
+            print('Demo data shape: ', demo_data.shape)
+            print('Demo data shape_c: ', demo_data_c.shape)
+
+            # Construct demonstration prompt
+            args.prompt_demo = ""
+            args.prompt_demo_c = ""
+            # Add demonstration in the format of Text: [text], Label: [label]
+            if args.flag_demo:
+                args.prompt_demo += "\n\nTask Context: \n"
+                for i in range(len(demo_data)):
+                    args.prompt_demo += f"Text: {demo_data['text'][i]}\t Label: {demo_data['label'][i]}\n"
+            if args.flag_demo_c:
+                args.prompt_demo_c += "\n\nTask Context: \n"
+                for i in range(len(demo_data_c)):
+                    if args.dataset != 'stackexchange':
+                        args.prompt_demo_c += f"Text: {demo_data_c['text'][i]}\t Label: {demo_data_c['label'][i]}\n"
+                    else:
+                        args.prompt_demo_c += f"Text: {demo_data_c['text'][i]}\t \n"
+
+            print(args.prompt_demo_c)
+
+
     def get_examples(self, processor, args, mode = 'train'):
         ori_examples = processor.get_examples(self.data_dir, mode)
         
