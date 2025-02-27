@@ -1,4 +1,29 @@
-# Active Generalized Category Discovery with Diverse LLM Feedback
+# GLEAN: Generalized Category Discovery with Diverse and Quality-Enhanced LLM Feedback
+
+
+This repository contains the implementation of the paper:
+> **GLEAN: Generalized Category Discovery with Diverse and Quality-Enhanced LLM Feedback** 
+> [[Paper]](https://arxiv.org/abs/2502.18414) <br>
+> Henry Peng Zou, Siffi Singh, Yi Nian, Jianfeng He, Jason Cai, Saab Mansour, Hang Su
+ <br>
+
+
+## Generalized Category Discovery (GCD)
+![Task](images/task.png)
+Generalized Category Discovery aims to automatically categorize unlabeled data by leveraging the information from a limited number of labeled data from known categories, while the unlabeled data may come from both known and novel categories.
+
+
+
+## GLEAN Pipeline
+![Pipeline](images/pipeline.png)
+
+Pipeline of GLEAN. Both labeled and unlabeled data are first forwarded to a text encoder/backbone to extract features for k-means clustering. Then we compute entropy and select instances with high entropy as ambiguous data to obtain LLM feedback for further refinement. Specifically, we query LLM to (1) select similar instances, (2) generate category descriptions and (3) assign pseudo categories to ambiguous data. Lastly, the three diverse feedback types are leveraged for model training via neighborhood contrastive learning and pseudo category alignment. During inference, we only utilize the text encoder and obtain final results via K-Means clustering on the extracted features.
+
+
+## LLM Feedback
+Illustration of three different types of LLM feedback utilized in GLEAN.
+![llm_feedback](images/llm_feedback.png)
+
 
 ## Setup
 ```bash
