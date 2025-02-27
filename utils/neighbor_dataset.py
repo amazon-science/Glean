@@ -78,23 +78,18 @@ class NeighborsDataset(Dataset):
                 anchor_text = self.tokenizer.decode(anchor[0], skip_special_tokens=True, clean_up_tokenization_spaces=True)
                 if self.di.get(index, -1) == -1:
                     prob_tensor = self.p[index, :]
-                    if self.args.component_ablation == 'wo_instance_feedback' or self.args.component_ablation == 'wo_both_feedback':
-                        neighbor_index = np.random.choice(self.indices[index], 1)[0]
-                        self.di[index] = neighbor_index
-                        self.di_all[index] = neighbor_index
-                    else:
-                        topk_probs, topk_indices = torch.topk(prob_tensor, self.args.options, dim=-1)
-                        qs = [np.random.choice(np.where(self.pred==topk_indices[i].item())[0], 1)[0] for i in range(self.args.options)]
-                        # neighbor_index = self.query_llm_gen(index, qs)
-                        neighbor_index, confidence = self.query_llm_gen(index, qs)
+                    topk_probs, topk_indices = torch.topk(prob_tensor, self.args.options, dim=-1)
+                    qs = [np.random.choice(np.where(self.pred==topk_indices[i].item())[0], 1)[0] for i in range(self.args.options)]
+                    # neighbor_index = self.query_llm_gen(index, qs)
+                    neighbor_index, confidence = self.query_llm_gen(index, qs)
 
-                        if self.args.flag_filtering:
-                            # filter out the LLM feedback with confidence less than a threshold
-                            if float(confidence) < self.args.filter_threshold:
-                                neighbor_index = np.random.choice(self.indices[index], 1)[0]
+                    if self.args.flag_filtering:
+                        # filter out the LLM feedback with confidence less than a threshold
+                        if float(confidence) < self.args.filter_threshold:
+                            neighbor_index = np.random.choice(self.indices[index], 1)[0]
 
-                        self.di[index] = neighbor_index
-                        self.di_all[index] = neighbor_index
+                    self.di[index] = neighbor_index
+                    self.di_all[index] = neighbor_index
                     
 
                     if self.args.weight_cluster_instance_cl > 0:
@@ -170,13 +165,6 @@ class NeighborsDataset(Dataset):
         s = self.tokenizer.decode(self.dataset.__getitem__(q)[0], skip_special_tokens=True, clean_up_tokenization_spaces=True)
         sqs = [self.tokenizer.decode(self.dataset.__getitem__(q)[0], skip_special_tokens=True, clean_up_tokenization_spaces=True) for q in qs]
         
-        # # Construct the base of the prompt
-        # prompt = (
-        #     f"Select the customer utterance that better corresponds with the Query in terms of {self.args.task}. "
-        #     "Please respond in the format 'Choice [number]' without explanation, e.g., 'Choice 1', 'Choice 2', etc."
-        #     "\nQuery: " + s
-        # )
-
         # Construct the base of the prompt
         prompt = f"Select the utterance that better corresponds with the Query in terms of {self.args.task}. "
         prompt += "\n Also show your confidence by providing a probability between 0 and 1."
@@ -204,18 +192,6 @@ class NeighborsDataset(Dataset):
             if 'gpt' not in self.args.llm:
                 os.environ["TOGETHER_API_KEY"] = self.args.api_key
                 client = Together()
-                # completion = client.chat.completions.create(
-                #     model= "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free", # "Qwen/Qwen2.5-72B-Instruct-Turbo", # "deepseek-ai/DeepSeek-V3", # "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free", "meta-llama/Llama-Vision-Free", 
-                #     messages=[
-                #         {"role": "system", "content": "You are a helpful assistant."},
-                #         {"role": "user", "content": prompt}
-                #     ],
-                #     temperature=0.0,  # Set to 0 to remove randomness
-                #     top_p=1.0,        # Use top_p sampling with the full range of tokens
-                #     n=1,               # Number of responses to generate
-                #     max_tokens=50     # Set a lower max_tokens value to limit response length and avoid timeout
-                # )
-                # choices_content = completion.choices[0].message.content
 
                 max_retries = 5
                 retry_delay = 1  # Wait for 1 seconds before retrying
@@ -240,9 +216,6 @@ class NeighborsDataset(Dataset):
                             time.sleep(retry_delay)
                         else:
                             print(f"Attempt {attempt + 1} failed: {e}. No more retries left.")
-                            # choices_content = None  # Handle the case where all retries fail
-                            # print(e)  # This will print the actual exception message
-                            # return qs[0], 0.0
                             raise e # Re-raise the exception to handle it outside the loop
 
 
@@ -285,13 +258,6 @@ class NeighborsDataset(Dataset):
 
     def query_llm_cluster_instance(self, anchor_text, topk_cluster_name, topk_cat_indices):
 
-        # # Construct the base of the prompt
-        # prompt = (
-        #     f"Select the category that better corresponds with the Query in terms of {self.args.task}. "
-        #     "Please respond in the format 'Choice [number]' without explanation, e.g., 'Choice 1', 'Choice 2', etc."
-        #     "\nQuery: " + anchor_text
-        # )
-
         # Construct the base of the prompt
         prompt = f"Select the category that better corresponds with the Query in terms of {self.args.task}. "
         prompt += "\n Also show your confidence by providing a probability between 0 and 1."
@@ -317,18 +283,6 @@ class NeighborsDataset(Dataset):
             if 'gpt' not in self.args.llm:
                 os.environ["TOGETHER_API_KEY"] = self.args.api_key
                 client = Together()
-                # completion = client.chat.completions.create(
-                #     model= "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free", # "Qwen/Qwen2.5-72B-Instruct-Turbo", # "deepseek-ai/DeepSeek-V3", # "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free", "meta-llama/Llama-Vision-Free", 
-                #     messages=[
-                #         {"role": "system", "content": "You are a helpful assistant."},
-                #         {"role": "user", "content": prompt}
-                #     ],
-                #     temperature=0.0,  # Set to 0 to remove randomness
-                #     top_p=1.0,        # Use top_p sampling with the full range of tokens
-                #     n=1,               # Number of responses to generate
-                #     max_tokens=50     # Set a lower max_tokens value to limit response length and avoid timeout
-                # )
-                # choices_content = completion.choices[0].message.content
 
                 max_retries = 5
                 retry_delay = 1  # Wait for 1 seconds before retrying
@@ -353,9 +307,6 @@ class NeighborsDataset(Dataset):
                             time.sleep(retry_delay)
                         else:
                             print(f"Attempt {attempt + 1} failed: {e}. No more retries left.")
-                            # choices_content = None  # Handle the case where all retries fail
-                            # print(e)  # This will print the actual exception message
-                            # return topk_cat_indices[0], 0.0
                             raise e # Re-raise the exception to handle it outside the loop
                             
 

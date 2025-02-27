@@ -21,7 +21,6 @@ from together import Together
 warnings.filterwarnings('ignore')
 logging.set_verbosity_error()
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-# os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
 class ModelManager:
     def __init__(self, args, data, pretrained_model=None):
@@ -31,7 +30,6 @@ class ModelManager:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.num_labels = data.num_labels
         self.model = CLBert(args, args.bert_model, device=self.device, num_labels=data.num_labels)
-        # self.tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
 
         if n_gpu > 1:
             self.model = nn.DataParallel(self.model)
@@ -144,26 +142,6 @@ class ModelManager:
                                 args.teacher_temp,
                             )
             
-        # Ablation Study: full|wo_ce|wo_cl_1|wo_cl_all|wo_instance_feedback|wo_cluster_feedback|wo_both_feedback
-        if args.component_ablation == 'wo_ce':
-            args.ce_weight = 0
-            args.sup_weight = 0
-            args.weight_ce_unsup = 0
-        elif args.component_ablation == 'wo_cl_1':
-            args.cl_weight = 0
-        elif args.component_ablation == 'wo_cl_all':
-            args.cl_weight = 0
-            args.weight_cluster_instance_cl = 0
-        elif args.component_ablation == 'wo_instance_feedback':
-            print('wo_instance_feedback, disabled instance feedback in the neighbor_dataset')
-        elif args.component_ablation == 'wo_cluster_feedback':
-            args.weight_cluster_instance_cl = 0
-        elif args.component_ablation == 'wo_both_feedback':
-            args.weight_cluster_instance_cl = 0
-            print('wo_both_feedback, disabled instance feedback in the neighbor_dataset')
-        else:
-            print('Full components in GCDLLMs enabled')
-            
         # Obtain initial features, labels, logits
         feats_gpu, labels, logits = self.get_features_labels(data.train_semi_dataloader, self.model, args, return_logit=True)
         feats = feats_gpu.cpu().numpy()
@@ -174,14 +152,10 @@ class ModelManager:
         # Category Characterization
         if self.args.weight_cluster_instance_cl > 0:
             cluster_name = self.category_characterization(data, km, feats_gpu)
-            # cluster_name = None
-            # cluster_name = ['(Category Name: exchange_rate_inquiry, Description: This category involves inquiries or concerns related to the current exchange rate and discrepancies in the exchange rates provided.)', '(Category Name: [statement_discrepancy], Description: [Category covers issues related to discrepancies or irregularities in statements or transaction records.])', '(Category Name: Supported_Cards, Description: Inquiries about the availability and usability of Visa and Mastercard with the service provider.)', '(Category Name: [transfer_processing_time], Description: [Inquiries about the processing duration for various types of transfers.])', '(Category Name: [card_usage_queries], Description: [Questions related to using cards for transactions, withdrawals, and inquiries.])', "(Category Name: pending_transfer, Description: Handling inquiries related to transfers that have not yet been processed or displayed in the recipient's account.)", '(Category Name: Verify_Top-Up, Description: Concerns related to verifying or understanding the verification process for top-ups.)', '(Category Name: virtual_card_requests, Description: Handling requests for virtual cards including regular and disposable ones)', "(Category Name: Account Details Update, Description: Handling inquiries related to editing or changing personal details on the user's account.)", '(Category Name: declined_card_transactions, Description: Inquiries about the reasons for card transactions being declined.)', '(Category Name: top_up_failed, Description: Inquiry about unsuccessful top-up transactions)', '[Category Name: Exchange Currency in App, Description: Inquiries related to the process of exchanging currencies within the app.]', '(Category Name: extra_charge_inquiries, Description: Inquiries about unexpected fees or charges for various financial transactions)', "(Category Name: extra_charge_on_statement, Description: Addressing unexpected or additional charges appearing on the user's account statement related to transactions)", '(Category Name: pin_change, Description: Inquiries related to changing or resetting personal identification numbers.)', '(Category Name: Pending_Transaction_Inquiry, Description: Handling user queries related to transactions that are in a pending state or not reflected in the account balance immediately after initiation.)', '(Category Name: Currency Exchange, Description: Handling queries related to currency exchange rates, costs, and potential additional charges.)', '(Category Name: Security Concerns, Description: Inquiries related to theft or loss of personal belongings containing sensitive information.)', '(Category Name: Source of Funds, Description: Addressing inquiries related to identifying the origin of funds in the account.)', '(Category Name: [fee_inquiry], Description: [Questions related to charges or fees associated with transfers or transactions.])', '(Category Name: Payment Processing, Description: Handling issues related to card payments, pending transactions, and failed payment attempts.)', '(Category Name: reported_lost_or_missing_card, Description: Handling inquiries and providing assistance related to lost or missing cards.)', '(Category Name: exchange_rate_issues, Description: Issues related to incorrect exchange rates for transactions or cash withdrawals abroad)', "(Category Name: why_verify_identity, Description: Issues related to verifying or proving one's identity.)", '(Category Name: [usage_restrictions], Description: [Questions related to limitations or restrictions on the use of disposable virtual cards.])', '(Category Name: card_activation, Description: Inquiries related to activating a new card.)', '(Category Name: missing_pin, Description: Issues related to the unavailability or loss of card PINs.)', '(Category Name: pending_transfer, Description: Handling issues related to pending transfers or delayed refunds)', '(Category Name: pin_related_issues, Description: Discussions related to issues with personal identification numbers (PINs) such as account blockages and resets.)', '(Category Name: top_up_methods, Description: Inquiries related to the various methods or options available for topping up an account or service.)', '(Category Name: card_ordering, Description: Inquiries and requests related to ordering physical or virtual cards.)', '(Category Name: top_up_with_cheque, Description: Category related to inquiries about topping up or adding funds using cheques.)', '(Category Name: virtual_card_inquiry, Description: Inquiries about obtaining or accessing virtual cards)', '(Category Name: why_verify_identity, Description: Inquiry about the reasons behind the verification of identity.)', '(Category Name: Fraudulent Transactions, Description: Handling and investigating unauthorized or suspicious transactions on an account.)', '(Category Name: transaction_fees, Description: Inquiries about the charges or fees associated with making transfers.)', '(Category Name: account_for_minors, Description: Inquiries related to opening accounts for children or minors.)', '(Category Name: [card_activation], Description: [Assistance with activating or tracking a card])', "(Category Name: extra_charge_on_statement, Description: Addresses inquiries about additional charges appearing on the user's financial statement.)", '(Category Name: [disposable_card_limits], Description: [Inquiring about the number of transactions allowed with a disposable card.])', '(Category Name: [payment_processing], Description: [Handling issues related to transactions, transfers, and payments that are pending, declined, or not processed successfully.])', '(Category Name: Extra_Charge_on_Card_Payment, Description: Inquiries about additional charges incurred when using a card for payment.)', '(Category Name: card_ordering, Description: Information related to ordering a new card.)', '(Category Name: [declined_card_payment], Description: [Category for inquiries regarding declined card payments])', '(Category Name: Refund_Inquiry, Description: Inquiries related to requesting refunds or returns for items purchased.)', '(Category Name: Cash Withdrawal Issues, Description: Handling issues related to discrepancies in cash withdrawal amounts from ATMs.)', '(Category Name: [atm_usage], Description: [Inquiries related to the use of cards at ATMs, including changing PINs and accepted ATM locations.])', '(Category Name: [disputed_transaction], Description: [Category for issues related to disputed or unclear transactions, including charges or withdrawals that the user does not recognize or that have not gone through successfully.])', '(Category Name: pending_transfer, Description: Inquiries about transfers that are still pending)', '(Category Name: card_fees, Description: Questions related to fees associated with physical cards, including top-up fees and charges for physical card issuance.)', "(Category Name: account_closure, Description: Managing user's request to close their account.)", '(Category Name: [currency_preferences], Description: [Handling requests related to receiving salary or funds in different currencies.])', '(Category Name: [top_up_options], Description: [Concerns and inquiries related to top-up functionality such as limits and customization.])', '(Category Name: Unauthorized Transactions, Description: Handling issues related to unauthorized transactions or payments on the account.)', '(Category Name: [exchange_rates_inquiry], Description: [Inquiries about how the platform determines its exchange rates.])', '(Category Name: Transfer Duration, Description: Inquiries about the time taken for transfers to be completed.)', '(Category Name: Transfer Issues, Description: Handling inquiries and providing explanations for failed or declined transfers.)', '(Category Name: top_up_methods, Description: Questions related to various payment methods for topping up an account.)', "(Category Name: Deposits and Transfers, Description: Handling inquiries related to depositing or transferring money into the user's account.)", '(Category Name: supported_cards_and_currencies, Description: Inquiring about the various fiat currencies and types of cards supported.)', '(Category Name: why_verify_identity, Description: Inquiries about the necessity and process of verifying identity)', '(Category Name: [transaction_fees], Description: [Inquiries related to charges, fees, or additional costs associated with transactions.])', '(Category Name: card_issue, Description: Issues related to card functionality and operation.)', '(Category Name: card_delivery_inquiry, Description: Inquiries regarding the time it will take to receive a new card)', '(Category Name: Pending Transfers, Description: Category related to inquiries about pending or declined transfers.)', '(Category Name: [card_activation_and_top_up], Description: [Questions related to activating new cards and topping up using cards.])', '(Category Name: refund_status_inquiry, Description: Inquiries about missing or not visible refunds in statements)', '(Category Name: adding_funds_via_transfer, Description: Inquiries related to adding money to the account using bank transfers or electronic fund transfers.)', '(Category Name: pending_transfer, Description: Dealing with delayed or pending payment transfers and transactions.)', "(Category Name: pending_cash_deposit, Description: Inquiries about cash deposits that have not yet reflected in the user's account)", '(Category Name: Payment Issues, Description: Category related to problems or concerns with making payments using cards such as declined transactions, missing funds after a top-up, or issues with online purchases.)', '(Category Name: Account Eligibility, Description: Inquiries related to the minimum age requirement for opening an account.)', '(Category Name: refund_request, Description: Handling requests from users who want to get a refund for a purchase they made but have not received the item or encountered issues with the transaction.)', '(Category Name: pending_status_inquiry, Description: Addressing inquiries about pending transactions)', '(Category Name: Update Personal Information, Description: Handling requests to modify personal details such as address or contact information.)', '(Category Name: Verification_Code_Issues, Description: Handling inquiries related to finding and using verification codes for account activities, such as top-up card verification.)', '(Category Name: declined_cash_withdrawal, Description: Inquiries about the inability to withdraw cash from an ATM)']
-            # print('\nAll Category Names and description:', cluster_name)
             print('len(cluster_name)',len(cluster_name))
 
             label_names = list(args.label_map_semi.keys())
             print('label_names',label_names)   
-            # measure_interpretability(cluster_name, label_names, args)  
         else:
             cluster_name = None
 
@@ -283,7 +257,6 @@ class ModelManager:
                                 loss_cl_cluster_instance += loss
                             # normalize the loss
                             loss_cl_cluster_instance /= len(an_w_cluster_des_feat)
-                    # print('loss_cl_cluster_instance:', loss_cl_cluster_instance)
 
 
                     ## Parametric Classification Loss
@@ -302,11 +275,6 @@ class ModelManager:
 
 
                     # Supervised Classification Loss for Labeled Data
-                    # try:
-                    #     batch = labelediter.next()
-                    # except StopIteration:
-                    #     labelediter = iter(data.train_labeled_dataloader)
-                    #     batch = labelediter.next()
                     try:
                         batch = next(labelediter)
                     except StopIteration:
@@ -457,17 +425,8 @@ class ModelManager:
         utterances = [self.tokenizer.decode(utt, skip_special_tokens=True, clean_up_tokenization_spaces=True) for utt in query]
 
         # Construct the prompt with any number of utterances
-        if args.prompt_ablation == 'wo_demo':
-            prompt = f"Given the following utterances, return a category name and a short category description to summarize the common {args.task} of these utterances in the format (Category Name: [category_name], Description: [description]) without explanation. \n"
-        elif args.prompt_ablation == 'wo_name':
-            prompt = f"Given the following utterances and examples of some known category names, return a short category description to summarize the common {args.task} of these utterances in the format (Category Description: [description]) without explanation. \n"
-            prompt += "Examples of Some Known Category Names: \n" + demo_name
-        elif args.prompt_ablation == 'wo_description':
-            prompt = f"Given the following utterances and examples of some known category names, return a category name to summarize the common {args.task} of these utterances in the format (Category Name: [category_name]) without explanation. \n"
-            prompt += "Examples of Some Known Category Names: \n" + demo_name
-        else:
-            prompt = f"Given the following utterances and examples of some known category names, return a category name and a short category description to summarize the common {args.task} of these utterances in the format (Category Name: [category_name], Description: [description]) without explanation. \n"
-            prompt += "Examples of Some Known Category Names: \n" + demo_name + "\n"
+        prompt = f"Given the following utterances and examples of some known category names, return a category name and a short category description to summarize the common {args.task} of these utterances in the format (Category Name: [category_name], Description: [description]) without explanation. \n"
+        prompt += "Examples of Some Known Category Names: \n" + demo_name + "\n"
 
         for i, utterance in enumerate(utterances, 1):
             prompt += f"Utterance {i}: {utterance}\n"
@@ -480,18 +439,6 @@ class ModelManager:
             if 'gpt' not in self.args.llm:
                 os.environ["TOGETHER_API_KEY"] = self.args.api_key
                 client = Together()
-                # completion = client.chat.completions.create(
-                #     model= "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free", # "Qwen/Qwen2.5-72B-Instruct-Turbo", # "deepseek-ai/DeepSeek-V3", # "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free", "meta-llama/Llama-Vision-Free", 
-                #     messages=[
-                #         {"role": "system", "content": "You are a helpful assistant."},
-                #         {"role": "user", "content": prompt}
-                #     ],
-                #     temperature=0.0,  # Set to 0 to remove randomness
-                #     top_p=1.0,        # Use top_p sampling with the full range of tokens
-                #     n=1,               # Number of responses to generate
-                #     max_tokens=50     # Set a lower max_tokens value to limit response length and avoid timeout
-                # )
-                # return completion.choices[0].message.content
                 max_retries = 5
                 retry_delay = 1  # Wait for 1 seconds before retrying
                 for attempt in range(max_retries):
@@ -515,10 +462,6 @@ class ModelManager:
                             time.sleep(retry_delay)
                         else:
                             print(f"Attempt {attempt + 1} failed: {e}. No more retries left.")
-                            # print(f"LLM query failed with exception: {e}")
-                            # # Return the first three utterances as a fallback
-                            # fallback_text = " | ".join(utterances[:3])
-                            # return f"Fallback Description: {fallback_text}"   
                             raise e # If all attempts fail, raise the last exception   
                         
             else:
@@ -670,9 +613,7 @@ if __name__ == '__main__':
     parser = init_model()
     args = parser.parse_args()
     result_source = 'tba'
-    # var = [args.dataset, args.running_method, args.architecture, args.known_cls_ratio, args.label_setting, args.labeled_shot, args.labeled_ratio, result_source, args.seed, args.topk, args.view_strategy, args.num_train_epochs, args.ce_weight, args.cl_weight, args.sup_weight, args.weight_ce_unsup, args.options, args.query_samples, args.update_per_epoch]
-    # names = ['dataset', 'running_method', 'architecture', 'known_cls_ratio', 'label_setting', 'labeled_shot', 'labeled_ratio', 'result_source', 'seed', 'topk', 'view_strategy', 'num_train_epochs', 'ce_weight', 'cl_weight', 'sup_weight', 'weight_ce_unsup', 'options', 'query_samples', 'update_per_epoch']
-
+    
     var = [args.dataset, args.running_method, args.architecture, args.known_cls_ratio, args.label_setting, args.labeled_shot, args.labeled_ratio, result_source, args.seed, args.topk, args.view_strategy, args.num_train_epochs, args.ce_weight, args.cl_weight, args.sup_weight, args.weight_ce_unsup, args.options, args.query_samples, args.update_per_epoch,
             args.sampling_strategy, args.allocation_degree,
             args.weight_cluster_instance_cl, args.options_cluster_instance_ratio]
